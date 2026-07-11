@@ -1,5 +1,13 @@
 # ANTTI'S BRAIN — DESCENT
 
+It is at huggingface: 
+
+https://huggingface.co/spaces/Aluode/AnttisBrain
+
+At huggingface there is 10 songs from suno. (Instrumental chill)
+
+
+
 An infinite procedural key-hunt built on the Antti's Brain 2 engine (WebGL2 raymarcher,
 hash-dreamed chambers, refracting crystal moons, webcam boundary). One HTML file, no
 dependencies, no build step. No enemies, no timers, no hand-made levels — only geometry,
