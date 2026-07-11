@@ -87,7 +87,11 @@
   pass the gate: next level. rooms grow heavier, more twisted, stranger in shape.<br><br>
   the <em>resonance</em> meter runs hot as you near the key. no enemies, no clocks —<br>
   only geometry, depth, and the hash. nothing is stored; walk back and every<br>
-  room is re-dreamed identically. click / drag to enter · mouse look is inverted.</div>
+  room is re-dreamed identically. click / drag to enter · mouse look is inverted.<br><br>
+  <em>first launch is slow:</em> your GPU driver must build the whole shader once —<br>
+  this can take a while (on some machines, minutes). it is not stuck; the counter<br>
+  below is real elapsed time. the driver caches the result, so every launch<br>
+  after this one is near-instant.</div>
   <div id="bootStat">waking up…</div>
 </div>
 
@@ -156,6 +160,7 @@ const cvs=$('gl'), boot=$('boot');
 
 /* any failure paints itself on the boot screen instead of dying silently */
 function bootErr(t){
+  if(window.dreamTick){clearInterval(window.dreamTick);window.dreamTick=null;}
   boot.classList.add('err');boot.classList.remove('gone');
   boot.innerHTML='<div class="big">It broke — here is why</div><div class="sub">'
     +String(t).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])).slice(0,600)+'</div>';
@@ -345,30 +350,46 @@ void main(){
 
     if(dm<0.03 && hb>=0){
       vec3 n=moonNormal(x,hb);
-      float F=0.04+0.96*pow(1.0-max(dot(-rd,n),0.0),5.0);   /* Schlick, glass F0 */
+      /* THE OPTICAL HACK: decouple shape from optics.
+         Flat faces have a constant n — eqSample(n) smears ONE webcam pixel
+         across the whole face, and refract(rd,n) acts like a window pane.
+         'radial' is the crystal-ball normal the shape WOULD have if it were
+         a sphere; texture wraps with it, and light bends through a blend of
+         the two, so a sharp cube refracts like a lens. The SDF march below
+         is untouched: silhouettes stay crisp, the ray still flies on. */
+      vec3 radial=normalize(x-wells[hb].xyz);
+      vec3 opticN=normalize(mix(n,radial,0.75));
+      if(dot(-rd,opticN)<=0.0) opticN=n;                     /* silhouette guard: never face away from the ray */
+      float F=0.04+0.96*pow(1.0-max(dot(-rd,opticN),0.0),5.0); /* Schlick, glass F0 */
       if(mode==1){                     /* PROJECTION: moons carry the image (opaque) */
         float L=0.0; for(int k=0;k<nWell;k++){
           L+=wells[k].w*mGain/(length(x-wells[k].xyz)+1.0);}
-        col=tint*eqSample(n)*(0.55+0.7*min(L,1.4)); done=true; break;
+        col=tint*eqSample(radial)*(0.55+0.7*min(L,1.4)); done=true; break;
       }
       /* BOUNDARY & CASCADE: heavy optical crystal.
          Fresnel glints off the surface; the ray itself REFRACTS (Snell),
          marches the negative-distance chord inside, exits the far side,
          and keeps flying — you see the world warped through the glass. */
-      glow+=tint*eqSample(reflect(rd,n))*F*0.55;             /* mirror glint, Fresnel-weighted */
-      if(mode==2) accum+=tint*eqSample(n)*F*1.1;             /* cascade: crystal wears the face at the rims */
+      glow+=tint*eqSample(reflect(rd,opticN))*F*0.55;        /* mirror glint, Fresnel-weighted */
+      if(mode==2) accum+=tint*eqSample(radial)*F*1.1;        /* cascade: crystal wears the face at the rims */
       bnc++; if(bnc>MAXB){col=(mode==2)?accum:vec3(0.0);done=true;break;}
       const float IOR=1.45;
-      vec3 d=refract(rd,n,1.0/IOR);
-      if(dot(d,d)<1e-4) d=reflect(rd,n);                     /* entry-grazing guard */
+      vec3 d=refract(rd,opticN,1.0/IOR);
+      if(dot(d,d)<1e-4) d=reflect(rd,opticN);                /* entry-grazing guard */
       x-=n*0.04;                                             /* step inside the glass */
       float chord=0.0;
       for(int j=0;j<26;j++){
         float sd=moonSD(x,hb);
         if(sd>-0.006){                                       /* reached the far surface */
           vec3 ne=moonNormal(x,hb);
-          vec3 ro=refract(d,-ne,IOR);
-          if(dot(ro,ro)<1e-4){ d=reflect(d,-ne); x+=d*0.03; chord+=0.03; continue; } /* TIR: bounce inside */
+          /* same optical hack on the way out: the far side of a flat pane
+             must also curve like the back of a lens, or the compression
+             cancels and the world-in-a-world never forms */
+          vec3 radE=normalize(x-wells[hb].xyz);
+          vec3 opticNE=normalize(mix(ne,radE,0.75));
+          if(dot(d,opticNE)<=0.0) opticNE=ne;                /* exit guard: normal must face along the ray */
+          vec3 ro=refract(d,-opticNE,IOR);
+          if(dot(ro,ro)<1e-4){ d=reflect(d,-opticNE); x+=d*0.03; chord+=0.03; continue; } /* TIR: bounce inside */
           d=ro; break;                                       /* refract out */
         }
         float st=max(-sd*0.8,0.025);
@@ -899,6 +920,7 @@ function compileAndStart(){
   gl.linkProgram(prog);
   const ext=gl.getExtension('KHR_parallel_shader_compile');
   function finish(){
+    if(window.dreamTick){clearInterval(window.dreamTick);window.dreamTick=null;}
     if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){
       const log=(gl.getShaderInfoLog(fs)||'')+' '+(gl.getShaderInfoLog(vs)||'')
                +' '+(gl.getProgramInfoLog(prog)||'');
@@ -988,7 +1010,13 @@ function loop(now){
   requestAnimationFrame(loop);
 }
 
-/* let the boot screen paint before the driver chews on the shader */
-$('bootStat').textContent='dreaming the shader…';
+/* let the boot screen paint before the driver chews on the shader.
+   the counter is honest elapsed time — compile progress isn't queryable */
+const dreamT0=performance.now();
+window.dreamTick=setInterval(()=>{
+  const s=((performance.now()-dreamT0)/1000)|0;
+  $('bootStat').textContent='dreaming the shader… '+s+'s (first launch only — cached after)';
+},500);
+$('bootStat').textContent='dreaming the shader… (first launch only — cached after)';
 requestAnimationFrame(()=>{try{compileAndStart();}catch(e){bootErr(e&&e.stack||e);}});
 </script>
