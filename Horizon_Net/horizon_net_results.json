@@ -1,0 +1,59 @@
+{
+ "acc_full_depth": 0.665,
+ "acc_certified": 0.665,
+ "certificate_agreement": 1.0,
+ "depth_mean": 6.2325,
+ "depth_median": 6.0,
+ "depth_p90": 8.0,
+ "depth_max": 12,
+ "depth_by_noise_bin": [
+  5.5181818181818185,
+  6.128065395095367,
+  6.562300319488818,
+  6.48169014084507,
+  6.454828660436137,
+  6.267515923566879
+ ],
+ "res_law_slope_measured": 0.6295934065934066,
+ "res_law_slope_predicted_bound": 3.10628371950539,
+ "rho_eff": 0.3820554632803624,
+ "res_law_slope_predicted_eff": 0.7203853174717626,
+ "rho_sweep": [
+  {
+   "rho": 0.5,
+   "mean_depth": 3.93,
+   "acc": 0.666,
+   "agree": 1.0
+  },
+  {
+   "rho": 0.6,
+   "mean_depth": 4.57,
+   "acc": 0.6665,
+   "agree": 1.0
+  },
+  {
+   "rho": 0.7,
+   "mean_depth": 5.2875,
+   "acc": 0.667,
+   "agree": 1.0
+  },
+  {
+   "rho": 0.8,
+   "mean_depth": 6.2325,
+   "acc": 0.665,
+   "agree": 1.0
+  },
+  {
+   "rho": 0.9,
+   "mean_depth": 7.5925,
+   "acc": 0.665,
+   "agree": 1.0
+  },
+  {
+   "rho": 0.95,
+   "mean_depth": 8.7015,
+   "acc": 0.666,
+   "agree": 1.0
+  }
+ ]
+}
