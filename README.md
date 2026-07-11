@@ -24,6 +24,15 @@ Do not hype. Do not lie. Just show.
 
 ---
 
+## The math escaped the game
+
+The central rendering trick here — apparently infinite recursive reflections computed with only **four** ray bounces — turned out not to be a graphics hack but a general principle. Each bounce of the mirror operator both dims the image and spatially shrinks it, so the infinite reflection series provably converges, in the only norm a retina can measure, after four applications. Four was the mathematically correct truncation depth all along; it was just chosen by eye first.
+
+Stated once: *when you want unbounded recursive structure, don't simulate the structure — implement one contracting operator and truncate at the observation horizon.*
+
+That principle now has a life of its own as **[Horizon Net](https://github.com/anttiluode/HorizonNet)** — a weight-tied neural network that halts, per input, at the exact iteration where a Banach fixed-point bound proves (or, on unconstrained transformer blocks, measures) that computing deeper can no longer change its answer. Certified anytime inference, born from a hall of mirrors. The repo carries the full honest ledger: what's proven, what's soft, what's still a toy, and what remains to be checked against prior art.
+
+
 ## The Divergence: Trying to Build It "Like Normal"
 
 During development, we took a weird side step trying to make the engine work "like normal." We tried to force variety by writing *more code*. We explicitly coded 12 discrete chamber shapes (cubes, cylinders, stars, gears) using a branched shape function and finite-difference normals. We also abandoned surface optics and forced light rays to march through the volumetric bulk of the glass objects to calculate Snell refraction and Beer-Lambert absorption. 
