@@ -6,7 +6,15 @@ https://huggingface.co/spaces/Aluode/AnttisBrain
 
 At huggingface there is 10 songs from suno. (Instrumental chill)
 
+Its also here: 
 
+https://anttiluode.github.io/AnttisBrain2/ (Without soundtrack). 
+
+To play it locally you can just copy the files from huggingface: 
+
+https://huggingface.co/spaces/Aluode/AnttisBrain/tree/main 
+
+Or make soundtrack of your own. The sound files are game1.mp3 to game10.mp3. 
 
 An infinite procedural key-hunt built on the Antti's Brain 2 engine (WebGL2 raymarcher,
 hash-dreamed chambers, refracting crystal moons, webcam boundary). One HTML file, no
