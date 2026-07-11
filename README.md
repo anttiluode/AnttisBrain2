@@ -1,5 +1,7 @@
 # ANTTI'S BRAIN — DESCENT
 
+EDIT: Fable wrote paper about the maths: resolution_horizon.md
+
 You can play the game with soudntrack at huggingface: 
 
 https://huggingface.co/spaces/Aluode/AnttisBrain
