@@ -1,5 +1,7 @@
 # ANTTI'S BRAIN — DESCENT
 
+![pic](pic.png)
+
 It is at huggingface: 
 
 https://huggingface.co/spaces/Aluode/AnttisBrain
