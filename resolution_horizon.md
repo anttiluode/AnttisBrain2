@@ -2,7 +2,8 @@
 
 ### Why four bounces look infinite, what the accident actually computed, and where the trick generalizes
 
-*PerceptionLab note — July 2026. Written against the AnttisBrain / AnttisBrain2 lineage (aeon forge → rajapinta → inspiration.html → brain descent). Honest ledger at the end. Do not hype. Do not lie. Just show.*
+*PerceptionLab note — July 2026. Written against the AnttisBrain / AnttisBrain2 lineage (aeon forge → rajapinta → inspiration.html (index.html at anttis brain rep)
+→ brain descent). Honest ledger at the end. Do not hype. Do not lie. Just show.*
 
 ---
 
