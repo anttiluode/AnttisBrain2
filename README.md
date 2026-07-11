@@ -1,166 +1,110 @@
 # ANTTI'S BRAIN — DESCENT
 
-![pic](pic.png)
-
-It is at huggingface: 
+You can play the game with soudntrack at huggingface: 
 
 https://huggingface.co/spaces/Aluode/AnttisBrain
 
-At huggingface there is 10 songs from suno. (Instrumental chill)
+Or here without it: 
 
-Its also here: 
+https://anttiluode.github.io/AnttisBrain/ 
 
-https://anttiluode.github.io/AnttisBrain2/ (Without soundtrack). 
+Or you can download it from huggingface with mp3's: 
 
-To play it locally you can just copy the files from huggingface: 
+git clone https://huggingface.co/spaces/Aluode/AnttisBrain/tree/main
 
-https://huggingface.co/spaces/Aluode/AnttisBrain/tree/main 
+And play it locally. 
 
-Or make soundtrack of your own. The sound files are game1.mp3 to game10.mp3. 
+![pic](pic.png)
 
-An infinite procedural key-hunt built on the Antti's Brain 2 engine (WebGL2 raymarcher,
-hash-dreamed chambers, refracting crystal moons, webcam boundary). One HTML file, no
-dependencies, no build step. No enemies, no timers, no hand-made levels — only geometry,
-depth, and the hash.
+An infinite procedural key-hunt built on the Antti's Brain 2 engine (WebGL2 raymarcher, hash-dreamed chambers, refracting crystal moons, webcam boundary). One HTML file, no dependencies, no build step. No enemies, no timers, no hand-made levels — only geometry, depth, and the hash.
 
-> Do not hype. Do not lie. Just show.
+Do not hype. Do not lie. Just show.
 
-## The game
+---
 
-- The brain is an endless chain of chambers, a pure function of `(SEED, room index)`.
-- **A level is a run of rooms**: level 1 is 4 rooms, level 2 is 5, … capped at 10 per level.
-- Somewhere in the level, **one crystal is the key**: it is gold and it pulses. Touch it.
-- The corridor after the level's last room is closed by a **red seal** — a glowing
-  membrane you cannot pass. Touch the key and the seal dissolves. Walk through: next level.
-- The **resonance meter** in the HUD is your only guide: it tells you how many rooms away
-  the key is, and once you're in the right room it runs hot with live distance. Hot / cold,
-  nothing more.
+## The Divergence: Trying to Build It "Like Normal"
 
-There is no way to lose. There is only further down.
+During development, we took a weird side step trying to make the engine work "like normal." We tried to force variety by writing *more code*. We explicitly coded 12 discrete chamber shapes (cubes, cylinders, stars, gears) using a branched shape function and finite-difference normals. We also abandoned surface optics and forced light rays to march through the volumetric bulk of the glass objects to calculate Snell refraction and Beer-Lambert absorption. 
 
-## What deepens with the level
+**The Result:** The GPU rejected it. The branches multiplied by the interior loops created a compile-time bomb that choked the driver for minutes. The heavy bulk transport caused the driver to TDR (Timeout Detection and Recovery) and crash. We had tried to put the complexity into the shader's execution paths, prioritizing physical bulk over constraint-driven beauty.
+
+## The Lesson: Complexity Belongs in Data, Not Code
+
+We learned that to survive the frame budget, we had to return to the logic of the original "Aeon Forge" and the meaning of *Rajapinta* (Boundary). The GPU merely enforced the engine's own metaphysics: information belongs on surfaces, and light travels in a vacuum. 
+
+The fix wasn't to optimize the 12 shapes; it was to delete them. We replaced the shape zoo with **one branchless law**—a single p-norm parametric superellipsoid kernel. Now, a room is no longer a hardcoded shape; it is a point in a continuous shape space defined by a parameter vector (cross-section exponent, profile exponent, squash, angular ripple, torus blend) drawn from the hash. Complexity is encoded entirely into data parameters, not shader branches.
+
+By returning optics to the boundary—reflecting, accumulating, and lensing at the surface without penetrating the bulk—the engine regained its elegance. The shader stays fixed and small, compiling instantly, while generating infinite variety.
+
+---
+
+## The Game
+
+The brain is an endless chain of chambers, a pure function of (SEED, room index).
+A level is a run of rooms: level 1 is 4 rooms, level 2 is 5, … capped at 10 per level.
+
+Somewhere in the level, one crystal is the key: it is gold and it pulses. Touch it. The corridor after the level's last room is closed by a red seal — a glowing membrane you cannot pass. Touch the key and the seal dissolves. Walk through: next level.
+
+The resonance meter in the HUD is your only guide: it tells you how many rooms away the key is, and once you're in the right room it runs hot with live distance. Hot / cold, nothing more. There is no way to lose. There is only further down.
+
+## What Deepens with the Level
 
 Everything below is still deterministic — same seed, same descent.
 
-| property | how it grows |
-|---|---|
-| level length | 4 rooms → 10 rooms (cap) |
-| shape pool | 6 shapes at level 1, +1 new shape per level, 12 total by level 7 |
-| **twist** | rooms shear around their vertical axis, stronger with depth |
-| ripple | from level 3, walls start to breathe with a triple-sine displacement |
-| **mass** | each room has its own mass factor (shown in HUD); moons grow heavier, lensing pulls harder |
-| moons per room | 3 → 5 |
+| Property | How it grows |
+| :--- | :--- |
+| **Level length** | 4 rooms → 10 rooms (cap) |
+| **Shape pool** | Rooms morph continuously with depth. Level 1 yields soft orbs; by Level 12 you walk twisted stars; by Level 21 the rooms become rings. The descent widens the parameter distribution. |
+| **Twist** | Rooms shear around their vertical axis, stronger with depth. |
+| **Ripple** | From level 3, walls start to breathe with a triple-sine displacement. |
+| **Mass** | Each room has its own mass factor (shown in HUD); moons grow heavier, lensing pulls harder. |
+| **Moons per room** | 3 → 5 |
 
-The twelve chamber shapes, in unlock order:
+The moons wear their room's shape, shrunk and rounded into optical glass, meaning new room parameters yield new crystal shapes instantly. Twist and ripple apply on top of any shape vector. 
 
-1. cube · 2. sphere · 3. hex prism · 4. star (5–7 points) · 5. octahedron · 6. cylinder —
-the classics —
-then 7. **capsule vault** · 8. **cut crystal** (box ∩ octahedron) · 9. **ellipsoid dome** ·
-10. **cross cathedral** · 11. **gear** (cog-rippled cylinder) · 12. **wheel** (walkable
-torus + hub + four spokes).
-
-The moons wear their room's shape, rounded into optical glass, so new room shapes mean
-new crystal shapes too. Twist applies on top of any shape, so a twisted star at level 6
-and a twisted gear at level 9 are genuinely different rooms even with the same base index
-math.
+---
 
 ## Controls
 
-- **W A S D** — move · **Q / E** — down / up · **Shift** — boost
-- **drag** — look (horizontal inverted, as tradition demands)
-- Modes: **Boundary** (walls are your camera) / **Projection** (moons carry the image) /
-  **Cascade** (heavy refracting glass)
-- Sliders: mass gain, lensing strength, music volume
-- **Music: on/off** — toggles the soundtrack
-- **New brain** — fresh seed, back to level 1
+*   **W A S D** — move
+*   **Q / E** — down / up
+*   **Shift** — boost
+*   **Drag** — look (horizontal inverted, as tradition demands)
 
-## Music
+### Modes
+*   **Boundary:** The walls are your camera; the moons are curved mirrors that lens and reflect them.
+*   **Projection:** The moons carry your face; every wall is a mirror. The image emanates from the bulk (the holographic swap).
+*   **Cascade:** Every crystal wears your face and mirrors its neighbors. Holographic accumulation with a capped bounce depth.
+*   **Glass:** The honest-physics exhibit. Heavy optics where the ray refracts through the crystal bulk (Snell + Beer-Lambert). Safe to run here because rays terminate at the image wall.
 
-Put `game1.mp3` … `game10.mp3` next to the HTML file. They play as an endless
-playlist: a random track starts on your first click (browsers require a gesture
-before audio), then they chain forever — when one ends the next begins, wrapping
-around after `game10.mp3`. Missing files are skipped automatically; if none of
-the ten are found the HUD says `no mp3s found` and the game plays silent.
-Volume slider in the control panel; the Music button pauses/resumes.
+### Toggles
+*   **Sliders:** Mass gain, lensing strength, music volume
+*   **Music:** on/off — toggles the soundtrack
+*   **New brain:** Fresh seed, back to level 1
 
-## Save / load
+---
 
-The entire game state is six numbers: `{version, seed, level, room index, key flag,
-max level reached}`. Everything else is re-dreamed from the hash on load, including the
-key's location and the walk direction of the chain (reconstructed by replaying the turn
-angles — verified bit-exact).
+## Save / Load
 
-- **Save** — writes to localStorage (when the browser allows it) and keeps a code ready.
-- **Save code** — prints the save as a short base64 string and copies it to the clipboard.
-  This works everywhere, including `file://` pages and sandboxes where localStorage is
-  blocked. Paste it into a text file, an email, a commit message.
-- **Load** — reads the local save, or accepts a pasted code.
-- The game **autosaves** on every level-up and key pickup, and silently resumes on launch
-  if a local save exists.
+The entire game state is six numbers: `{version, seed, level, room index, key flag, max level reached}`. Everything else is re-dreamed from the hash on load, including the key's location and the walk direction of the chain (reconstructed by replaying the turn angles — verified bit-exact).
 
-Walking backward is always allowed. Levels you have already beaten stay open (the game
-remembers your max level, so re-crossing an old seal never re-locks it), but the current
-level's key must be found each fresh descent into new territory.
+*   **Save:** Writes to localStorage (when the browser allows it) and keeps a code ready.
+*   **Save code:** Prints the save as a short base64 string and copies it to the clipboard. This works everywhere, including `file://` pages and sandboxes where localStorage is blocked. Paste it into a text file, an email, a commit message.
+*   **Load:** Reads the local save, or accepts a pasted code.
 
-## How the infinity works
+The game autosaves on every level-up and key pickup, and silently resumes on launch if a local save exists. Walking backward is always allowed. Levels you have already beaten stay open (the game remembers your max level, so re-crossing an old seal never re-locks it), but the current level's key must be found each fresh descent into new territory.
 
-Same principle as Brain 2, extended:
+---
 
-- `rng(index, salt)` — an integer hash (multiply/xor/shift mix of `SEED`, index, salt).
-  Any room at any depth can be queried in O(1) without generating the rooms before it.
-- `roomDef(i)` now first computes which level room `i` belongs to (cumulative level
-  depths are a closed-form loop), then draws shape / size / twist / ripple / mass / turn /
-  name from independent salts, with the level scaling the ranges.
-- Per level, a second hash stream `rngL(level, salt)` places the key room. The key is
-  always moon 0 of that room, so it can never be hidden by settings.
-- Only 3 rooms exist at a time (prev / current / next). The seal is a single sphere SDF
-  in the exit corridor, present only while the key is unfound and you are in the exit room —
-  blocked in the JS collision twin and rendered as a pulsing membrane in the shader.
+## Technical Notes
 
-## Technical notes
-
-- Single fragment shader, one fullscreen triangle, raymarched SDFs with real Snell
-  refraction + total internal reflection through the moons and Beer–Lambert tinting.
-- Rooms and moons share one 12-way shape function; moons are derived from it via
-  const scale/rounding tables, which roughly halves the shader the driver must
-  compile. Well loops use dynamic bounds so ANGLE doesn't unroll them 15-wide.
-- Shader compilation is deferred until after first paint and uses
-  KHR_parallel_shader_compile when available, with a shimmer bar and elapsed
-  timer on the boot screen. Loop bounds (march steps, glass-refraction steps,
-  wall-escape steps) are uniforms, which blocks driver loop unrolling — the
-  main cause of minutes-long first compiles on Windows.
-- The wheel room's four spokes fold to two by symmetry (|x|,|z|), an exact
-  identity that trims the hottest SDF.
-- The key crystal orbits wide (up to ~0.34 × room size off the center line) with a
-  tight pickup radius, so finding the key room via resonance is only half the hunt.
-- Twist and ripple are applied as domain modifications with a Lipschitz correction
-  factor on the returned distance, so marching stays conservative and never tunnels.
-- Every SDF has a JavaScript twin used for collision and gate transitions; the twelve
-  room shapes were tested to guarantee the room center is deep interior (transition
-  trigger fires at −1.0), so no shape can ever strand you in a wall.
-- Webcam feeds the boundary texture; falls back to an animated test pattern.
-- WebGL2 required.
+*   **Single Fragment Shader:** One fullscreen triangle, raymarched SDFs.
+*   **Unified Parametric SDF:** Rooms and moons share one branchless shape function, driven by a 6-number vector. There are no discrete shape loops to unroll and no finite-difference normal overhead for the analytical bases.
+*   **Guaranteed Transitions:** Every SDF has a JavaScript twin used for collision and gate transitions. The deterministic pure function guarantees the room center is deep interior (transition trigger fires at −1.0), so no parametric shape configuration can ever strand you in a wall.
+*   **Lipshitz Continuity:** Twist and ripple are applied as domain modifications with a Lipschitz correction factor on the returned distance, so marching stays conservative and never tunnels (guarded against radial singularity blow-ups).
+*   **First Paint Compilation:** Shader compilation is deferred until after first paint and uses `KHR_parallel_shader_compile` when available. Loop bounds (march steps, glass-refraction steps, wall-escape steps) are passed as **uniforms**. This forces the D3D/ANGLE compiler to compile the loop body exactly once rather than unrolling a 180-step march, eliminating the compile-time bomb. 
+*   **O(1) Hash Generation:** `rng(index, salt)` handles the integer hash. Any room at any depth can be queried in O(1) without generating the rooms before it. Only 3 rooms exist at a time (prev / current / next).
 
 ## Running
 
-Open `anttis-brain-descent.html` in any WebGL2 browser, with the mp3s in the
-same folder. Allow the camera if you want the walls to be you; decline and the
-pattern takes over.
-
-## First launch and the "dreaming the shader" bar
-
-The boot screen reports its state. `dreaming the shader…` means the GPU driver
-is compiling; an amber shimmer bar and a live seconds counter run while it does
-(compile progress isn't queryable from WebGL, so the counter is honest elapsed
-time rather than a fake percentage). This happens on the FIRST launch only —
-the driver caches the compiled shader on disk, so later launches are near
-instant.
-
-It should now be fast even the first time: all raymarch loop bounds are passed
-as uniforms, so the D3D/ANGLE compiler cannot unroll the 180-step march and is
-forced to compile the loop body once instead of 180 times. That, not the shape
-count, was the compile-time bomb — all twelve chamber shapes stay.
-
-`ready — click to enter` means go. Any JavaScript or shader error paints itself
-on the boot screen in red with the actual message — send that text and it can
-be fixed.
+Open `anttis-brain-descent.html` in any WebGL2 browser. Place `game1.mp3` ... `game10.mp3` in the same directory for endless chained audio. Allow the camera if you want the boundary texture to be you; decline, and the animated test pattern takes over.
