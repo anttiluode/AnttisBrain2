@@ -88,10 +88,9 @@
   the <em>resonance</em> meter runs hot as you near the key. no enemies, no clocks —<br>
   only geometry, depth, and the hash. nothing is stored; walk back and every<br>
   room is re-dreamed identically. click / drag to enter · mouse look is inverted.<br><br>
-  <em>first launch is slow:</em> your GPU driver must build the whole shader once —<br>
-  this can take a while (on some machines, minutes). it is not stuck; the counter<br>
-  below is real elapsed time. the driver caches the result, so every launch<br>
-  after this one is near-instant.</div>
+  <em>first launch:</em> the GPU driver compiles the shader once, then caches it.<br>
+  the world is now ONE branchless shape kernel — this should take seconds, not<br>
+  minutes. the counter below is honest elapsed time either way.</div>
   <div id="bootStat">waking up…</div>
 </div>
 
@@ -120,6 +119,7 @@
     <button id="m0" class="on">Boundary</button>
     <button id="m1">Projection</button>
     <button id="m2">Cascade</button>
+    <button id="m3">Glass</button>
   </div>
   <div class="field"><label>Mass gain <var id="m_l">1.0</var></label>
     <input id="m" type="range" min="0.2" max="2.2" step="0.05" value="1.0"></div>
@@ -184,12 +184,17 @@ uniform vec2 iRes;
 uniform float iTime;
 uniform vec3 camP,camR,camU,camF;
 uniform int nWell,mode,keyWell;
+/* loop bounds as UNIFORMS: the D3D/ANGLE compiler cannot know their value,
+   so it cannot unroll the raymarch 180-wide (x26 for the glass chord) —
+   it must compile each loop body ONCE. This is the first-launch fix. */
+uniform int marchN,glassN,escN;
 uniform vec4 wells[${MAXW}];     /* xyz pos · w size */
 uniform vec3 wellCol[${MAXW}];
-uniform vec4 wellPar[${MAXW}];   /* x shape · y angA · z angB · w star-n */
+uniform vec4 wellPar[${MAXW}];   /* x spin-xz · y spin-xy · z room index · w free */
 uniform vec3 roomPos[3];         /* prev · current · next */
-uniform vec4 roomPar[3];         /* x shape · y size · z half-height · w star-n */
-uniform vec4 roomMod[3];         /* x twist · y ripple amp · z ripple freq · w mass */
+uniform vec4 roomPar[3];         /* x size · y p-xz · z p-vert · w squash */
+uniform vec4 roomMod[3];         /* x twist · y breath amp · z breath freq · w mass */
+uniform vec4 roomShp[3];         /* x ripple amp · y lobes · z ring blend · w free */
 uniform vec3 roomTintU[3];
 uniform vec4 seal;               /* xyz pos · w radius (<0 = open) */
 uniform float mGain,lensK;
@@ -197,65 +202,46 @@ uniform sampler2D camTex;
 
 /* ---------- primitives ---------- */
 vec2 rot2(vec2 v,float a){float c=cos(a),s=sin(a);return vec2(c*v.x-s*v.y,s*v.x+c*v.y);}
-float sdBox3(vec3 p,vec3 b){vec3 q=abs(p)-b;return length(max(q,0.))+min(max(q.x,max(q.y,q.z)),0.);}
-float sdHexP(vec3 p,vec2 h){ /* cross-section xy · half-height z */
-  const vec3 k=vec3(-0.8660254,0.5,0.57735);
-  p=abs(p);
-  p.xy-=2.0*min(dot(k.xy,p.xy),0.0)*k.xy;
-  vec2 d=vec2(length(p.xy-vec2(clamp(p.x,-k.z*h.x,k.z*h.x),h.x))*sign(p.y-h.x),p.z-h.y);
-  return min(max(d.x,d.y),0.0)+length(max(d,0.0));}
-float sdStarN(vec2 p,float r,float n,float m){ /* n-pointed star, m in (2,n) */
-  float an=3.1415927/n, en=3.1415927/m;
-  vec2 acs=vec2(cos(an),sin(an)), ecs=vec2(cos(en),sin(en));
-  float bn=mod(atan(p.x,p.y),2.0*an)-an;
-  p=length(p)*vec2(cos(bn),abs(sin(bn)));
-  p-=r*acs;
-  p+=ecs*clamp(-dot(p,ecs),0.0,r*acs.y/ecs.y);
-  return length(p)*sign(p.x);}
-float sdOcta(vec3 p,float s){p=abs(p);return (p.x+p.y+p.z-s)*0.57735;}
-float opExtr(float d2,float z,float h){vec2 w=vec2(d2,abs(z)-h);
-  return min(max(w.x,w.y),0.0)+length(max(w,0.0));}
 float sdSeg(vec3 p,vec3 a,vec3 b){vec3 pa=p-a,ba=b-a;
   float h=clamp(dot(pa,ba)/dot(ba,ba),0.0,1.0);return length(pa-ba*h);}
 
-/* ---------- the twelve shapes. rooms and moons share this ONE chain ----------
-   signed, negative inside. s = radius-ish, h = half-height, n = star points */
-float shapeSD(vec3 q,float sh,float s,float h,float n){
-  int i=int(sh+0.5);
-  if(i==0) return sdBox3(q,vec3(s,h,s));
-  if(i==1) return length(q)-s;
-  if(i==2) return sdHexP(vec3(q.x,q.z,q.y),vec2(s,h));
-  if(i==3){float m=2.0+(n-2.0)*0.45;
-           return opExtr(sdStarN(q.xz,s*1.15,n,m),q.y,h);}
-  if(i==4) return sdOcta(q,s*1.5);
-  if(i==5) return max(length(q.xz)-s,abs(q.y)-h);          /* cylinder */
-  if(i==6){vec3 c=q; c.y-=clamp(c.y,-h*0.55,h*0.55);       /* capsule vault */
-           return length(c)-s*0.90;}
-  if(i==7) return max(sdBox3(q,vec3(s*0.95)),sdOcta(q,s*1.45)); /* cut crystal */
-  if(i==8) return (length(vec3(q.x,q.y*1.35,q.z))-s*1.08)*0.72; /* ellipsoid dome */
-  if(i==9) return min(sdBox3(q,vec3(s,h*0.55,s*0.38)),          /* cross cathedral */
-              min(sdBox3(q,vec3(s*0.38,h*0.55,s)),
-                  sdBox3(q,vec3(s*0.45,h,s*0.45))));
-  if(i==10){float a=atan(q.z,q.x);                          /* gear */
-            float rr=s*(0.88+0.11*cos(a*n*2.0));
-            return max(length(q.xz)-rr,abs(q.y)-h)*0.68;}
-  /* 11 = wheel: torus + hub + four spokes, all walkable */
-  float tor=length(vec2(length(q.xz)-s*0.72,q.y))-s*0.40;
-  float hub=length(q)-s*0.40;
-  float sp=min(min(sdSeg(q,vec3(0.),vec3(s*0.72,0.,0.)),
-                   sdSeg(q,vec3(0.),vec3(-s*0.72,0.,0.))),
-               min(sdSeg(q,vec3(0.),vec3(0.,0.,s*0.72)),
-                   sdSeg(q,vec3(0.),vec3(0.,0.,-s*0.72))))-s*0.17;
-  return min(tor,min(hub,sp));
+/* ---------- THE ONE SHAPE — the Aeon Forge move applied to geometry.
+   Shape is a PARAMETER VECTOR drawn from the hash, not a branch:
+     px  cross-section exponent  (2 = circle -> 8 = square)
+     pv  profile exponent        (2 = ball   -> 8 = prism)
+     hy  squash ratio            (height / size)
+     aa · an  angular ripple amp · lobes     (gears, stars)
+     tw  torus blend             (0 = solid  -> 1 = ring)
+   One branchless formula: compiles in a blink, and rooms MORPH
+   continuously with depth instead of unlocking discrete shapes.
+   Conservative distance: p-norms with p>=2 are 1-Lipschitz, mix of
+   1-Lipschitz fields is 1-Lipschitz, ripple guarded by its own slope. */
+float shapeSD(vec3 q,float s,float px,float pv,float hy,
+              float aa,float an,float tw){
+  float cx=pow(pow(abs(q.x)+1e-5,px)+pow(abs(q.z)+1e-5,px),1.0/px);
+  float lp=pow(pow(cx,pv)+pow(abs(q.y/hy)+1e-5,pv),1.0/pv);
+  float d=(lp-s)*min(hy,1.0);
+  if(tw>0.001){
+    float dR=length(vec2(length(q.xz)-s*0.72,q.y))-s*0.42;
+    d=mix(d,dR,tw);
+  }
+  if(aa>0.001){
+    float rr=length(q.xz);
+    float w=clamp(rr/(0.35*s),0.0,1.0);  /* fade lobes near the axis:
+                                            kills the 1/r slope blow-up */
+    d-=s*aa*w*cos(an*atan(q.z,q.x+1e-6));
+  }
+  return d/(1.0+aa*(an+1.0)*2.9);        /* true slope bound of the faded ripple */
 }
 float roomSD(vec3 p,int r){
   vec3 q=p-roomPos[r];
   float tw=roomMod[r].x;
   if(abs(tw)>0.0005) q.xz=rot2(q.xz,q.y*tw);
-  float d=shapeSD(q,roomPar[r].x,roomPar[r].y,roomPar[r].z,roomPar[r].w);
+  float d=shapeSD(q,roomPar[r].x,roomPar[r].y,roomPar[r].z,roomPar[r].w,
+                  roomShp[r].x,roomShp[r].y,roomShp[r].z);
   float ra=roomMod[r].y;
   if(ra>0.001) d+=ra*sin(q.x*roomMod[r].z)*sin(q.y*roomMod[r].z)*sin(q.z*roomMod[r].z);
-  return d/(1.0+abs(tw)*roomPar[r].y*0.6+ra*roomMod[r].z);   /* Lipschitz guard */
+  return d/(1.0+abs(tw)*roomPar[r].x*0.6+ra*roomMod[r].z);   /* Lipschitz guard */
 }
 float worldSD(vec3 p){
   float d=min(roomSD(p,0),min(roomSD(p,1),roomSD(p,2)));
@@ -271,21 +257,18 @@ vec3 wallNormal(vec3 p){ /* inward-facing */
     e.xyy*worldSD(p+e.xyy)+e.yyx*worldSD(p+e.yyx)+
     e.yxy*worldSD(p+e.yxy)+e.xxx*worldSD(p+e.xxx));}
 
-/* ---------- moons: the same twelve shapes, shrunk and rounded into glass.
-   core-scale, height-scale and rounding radius per shape, from const tables —
-   this keeps the shader small enough for slow driver compilers ---------- */
-const float CS[12]=float[12](0.50,1.00,0.60,0.765,0.613,0.52,0.644,0.590,0.740,0.600,0.568,0.55);
-const float CH[12]=float[12](0.50,1.00,0.34,0.180,0.613,0.42,0.545,0.590,0.740,0.470,0.280,0.55);
-const float CR[12]=float[12](0.26,0.00,0.22,0.16,0.24,0.20,0.00,0.18,0.06,0.14,0.12,0.10);
+/* ---------- moons wear their room's shape — the SAME kernel,
+   shrunk and rounded into optical glass. no tables, no branches. ---------- */
 float moonSD(vec3 p,int k){
   vec3 q=p-wells[k].xyz;
   float s=wells[k].w;
   float bs=length(q)-s*2.2;
   if(bs>0.6) return bs;
-  q.xz=rot2(q.xz,wellPar[k].y);
-  q.xy=rot2(q.xy,wellPar[k].z);
-  int i=int(wellPar[k].x+0.5);
-  return shapeSD(q,wellPar[k].x,s*CS[i],s*CH[i],wellPar[k].w)-s*CR[i];
+  q.xz=rot2(q.xz,wellPar[k].x);
+  q.xy=rot2(q.xy,wellPar[k].y);
+  int ri=int(wellPar[k].z+0.5);
+  return shapeSD(q,s*0.62,roomPar[ri].y,roomPar[ri].z,roomPar[ri].w,
+                 roomShp[ri].x,roomShp[ri].y,roomShp[ri].z)-s*0.10;
 }
 vec3 moonNormal(vec3 p,int k){
   const vec2 e=vec2(0.012,-0.012);
@@ -314,7 +297,7 @@ void main(){
   vec3 gA0=mix(roomPos[0],roomPos[1],0.28), gB0=mix(roomPos[0],roomPos[1],0.72);
   vec3 gA1=mix(roomPos[1],roomPos[2],0.28), gB1=mix(roomPos[1],roomPos[2],0.72);
 
-  for(int i=0;i<180;i++){
+  for(int i=0;i<marchN;i++){
     /* lensing: deflection per path length, dtheta ~ gradPhi * ds */
     if(lensK>0.001){
       vec3 pull=vec3(0.0);
@@ -366,19 +349,44 @@ void main(){
           L+=wells[k].w*mGain/(length(x-wells[k].xyz)+1.0);}
         col=tint*eqSample(radial)*(0.55+0.7*min(L,1.4)); done=true; break;
       }
-      /* BOUNDARY & CASCADE: heavy optical crystal.
-         Fresnel glints off the surface; the ray itself REFRACTS (Snell),
-         marches the negative-distance chord inside, exits the far side,
-         and keeps flying — you see the world warped through the glass. */
+      if(mode==2){
+        /* CASCADE: the inspiration.html magic, verbatim in spirit.
+           The ray NEVER enters the crystal. It deposits a translucent
+           layer of the boundary image (hologram accumulation), then
+           bounces off the sphere-blended normal and keeps flying —
+           moon to wall to moon. Recursion is capped at 4 like the
+           original: it LOOKS endless because the lensing fisheye
+           compounds every bounce. Cheap, so it can never TDR. */
+        accum+=tint*eqSample(radial)*0.5;
+        rd=reflect(rd,opticN);
+        tint*=0.62; bnc++;
+        if(bnc>4){col=accum;done=true;break;}
+        for(int j=0;j<escN;j++){ if(moonSD(x,hb)>0.05)break; x+=n*0.05; }
+        x+=rd*0.04; trav+=0.08; stp=0.05; continue;
+      }
+      if(mode==0){
+        /* BOUNDARY: the rajapinta_box move — moons are curved mirrors.
+           gravity already bent the ray on the way in; the surface just
+           reflects the boundary. your face drags where the moon passes. */
+        rd=reflect(rd,opticN);
+        tint*=0.82; bnc++;
+        if(bnc>4){col=vec3(0.0);done=true;break;}
+        for(int j=0;j<escN;j++){ if(moonSD(x,hb)>0.05)break; x+=n*0.05; }
+        x+=rd*0.04; trav+=0.08; stp=0.05; continue;
+      }
+      /* GLASS (mode 3): heavy optical crystal — the one bulk-transport
+         mode, kept as the honest-physics exhibit. Snell in, marched
+         chord, Beer-Lambert tint, Snell out. Affordable ONLY because
+         Glass rays terminate at the first (image) wall; in the
+         mirror-wall modes this march is what caused the TDR. */
       glow+=tint*eqSample(reflect(rd,opticN))*F*0.55;        /* mirror glint, Fresnel-weighted */
-      if(mode==2) accum+=tint*eqSample(radial)*F*1.1;        /* cascade: crystal wears the face at the rims */
-      bnc++; if(bnc>MAXB){col=(mode==2)?accum:vec3(0.0);done=true;break;}
+      bnc++; if(bnc>MAXB){col=vec3(0.0);done=true;break;}
       const float IOR=1.45;
       vec3 d=refract(rd,opticN,1.0/IOR);
       if(dot(d,d)<1e-4) d=reflect(rd,opticN);                /* entry-grazing guard */
       x-=n*0.04;                                             /* step inside the glass */
       float chord=0.0;
-      for(int j=0;j<26;j++){
+      for(int j=0;j<glassN;j++){
         float sd=moonSD(x,hb);
         if(sd>-0.006){                                       /* reached the far surface */
           vec3 ne=moonNormal(x,hb);
@@ -399,11 +407,11 @@ void main(){
       tint*=exp(-(vec3(1.0)-wellCol[hb])*chord*0.35)*0.96;
       rd=d;
       vec3 ne2=moonNormal(x,hb);
-      for(int j=0;j<10;j++){ if(moonSD(x,hb)>0.05)break; x+=ne2*0.05; }
+      for(int j=0;j<escN;j++){ if(moonSD(x,hb)>0.05)break; x+=ne2*0.05; }
       x+=rd*0.04; trav+=chord+0.08; stp=0.05; continue;
     }
     if(dw<0.03){
-      if(mode==0){                     /* BOUNDARY: walls are the image */
+      if(mode==0||mode==3){            /* BOUNDARY & GLASS: walls are the image */
         vec3 wc=wallImg(x);
         float L=0.0; for(int k=0;k<nWell;k++){
           L+=wells[k].w*mGain/(length(x-wells[k].xyz)+1.0);}
@@ -412,8 +420,8 @@ void main(){
       } else {                         /* PROJECTION / CASCADE: walls mirror */
         vec3 n=wallNormal(x);
         rd=reflect(rd,n); tint*=0.85; bnc++;
-        if(bnc>MAXB){ col=(mode==2)?accum:vec3(0.0); done=true; break; }
-        for(int j=0;j<10;j++){ if(-worldSD(x)>0.05)break; x+=n*0.05; }
+        if(bnc>4){ col=(mode==2)?accum:vec3(0.0); done=true; break; } /* inspiration's maxBnc=4 */
+        for(int j=0;j<escN;j++){ if(-worldSD(x)>0.05)break; x+=n*0.05; }
         x+=rd*0.04; stp=0.05; continue;
       }
     }
@@ -493,8 +501,17 @@ function rng(i,salt){
   t^=t+Math.imul(t^(t>>>7),t|61);
   return ((t^(t>>>14))>>>0)/4294967296;
 }
-const SHAPENAMES=['CUBE','SPHERE','HEX PRISM','STAR','OCTAHEDRON','CYLINDER',
-                  'CAPSULE VAULT','CUT CRYSTAL','DOME','CROSS CATHEDRAL','GEAR','WHEEL'];
+/* shape is continuous now — names are nearest archetypes, for the HUD */
+function shapeName(d){
+  if(d.tw>0.30)return 'RING';
+  if(d.aa>0.05)return (d.an>=8?'GEAR-':'STAR-')+d.an;
+  const bx=d.px>4.5, pr=d.pv>4.5;
+  if(bx&&pr)return 'CUBE';
+  if(!bx&&pr)return 'CYLINDER';
+  if(bx&&!pr)return 'CUSHION';
+  if(d.hy<0.62)return 'DOME';
+  return 'ORB';
+}
 const SYL=['KA','RA','JA','PIN','TA','VUO','LU','MI','SA','TÄH','TI','KI','VI','HEL','ME','NU','SO','LO'];
 
 /* ------- level geometry: depth(L) rooms per level, cumulative starts ------- */
@@ -514,23 +531,40 @@ function nMoonsOf(L){return Math.min(3+((L-1)>>1),5);}
 
 function roomDef(i){
   const L=levelOfRoom(i);
-  const pool=Math.min(6+Math.max(L-1,0),12);           /* shapes unlock with depth */
-  const shape=Math.floor(rng(i,1)*pool);
+  /* the Aeon Forge move: depth widens the PARAMETER RANGES of one kernel —
+     rooms morph continuously with the descent instead of unlocking shapes */
+  const spread=Math.min(1.2+L*0.8,6.0);
+  const px=2.0+rng(i,1)*spread;                     /* 2 circle -> 8 square */
+  const pv=2.0+rng(i,4)*spread;                     /* 2 ball   -> 8 prism  */
   const size=7.0+rng(i,2)*4.0+Math.min(L*0.15,3.0);
   const height=4.5+rng(i,3)*2.5;
-  const starN=5+Math.floor(rng(i,4)*3);                /* 5, 6 or 7 points */
+  const hy=Math.min(Math.max(height/size,0.45),1.0);
+  const an=4+Math.floor(rng(i,13)*9);               /* 4..12 lobes */
+  let aa=L>=2?rng(i,12)*rng(i,12)*Math.min(0.02+L*0.013,0.12):0.0; /* lobes amp */
+  aa=Math.min(aa,0.5/an);                           /* slope budget: aa*an <= 0.5 */
+  let tw=L>=4?Math.pow(rng(i,14),1.5)*Math.min((L-3)*0.10,0.55):0.0; /* ring blend */
   const hue=rng(i,5);
-  const turn=(rng(i,6)-0.5)*2.4;                       /* gate heading vs. entry, +-69 deg */
-  const twist=(rng(i,8)-0.5)*2.0*Math.min(0.015+L*0.011,0.13);
-  const ripA=Math.min(Math.max(L-2,0)*0.06,0.45)*rng(i,9);
+  const turn=(rng(i,6)-0.5)*2.4;                    /* gate heading vs. entry */
+  let twist=(rng(i,8)-0.5)*2.0*Math.min(0.015+L*0.011,0.13);
+  let ripA=Math.min(Math.max(L-2,0)*0.06,0.45)*rng(i,9);
   const ripF=0.5+rng(i,10)*1.2;
+  /* GUARANTEE the room centre is deep interior (transition fires at -1.0).
+     Pure function of the drawn values, so still deterministic per (SEED,i).
+     Lobes are zero at the axis (faded), so they don't enter the formula. */
+  const cDepth=()=>((-(size*hy)*(1-tw)+size*0.30*tw)
+        /(1.0+aa*(an+1.0)*2.9)
+        /(1.0+Math.abs(twist)*size*0.6+ripA*ripF));
+  for(let g=0;g<10 && cDepth()>-1.3;g++){
+    tw*=0.7; aa*=0.7;
+    if(g>2){twist*=0.75; ripA*=0.75;}
+  }
   const massK=Math.min(0.7+rng(i,11)*0.9+L*0.04,2.8);
   let name='';const nc=2+Math.floor(rng(i,7)*2);
   for(let k=0;k<nc;k++)name+=SYL[Math.floor(rng(i,20+k)*SYL.length)];
   const tint=[0.86+0.14*Math.cos(6.283*hue),
               0.86+0.14*Math.cos(6.283*(hue+0.33)),
               0.86+0.14*Math.cos(6.283*(hue+0.66))];
-  return {shape,size,height,starN,hue,turn,name,tint,twist,ripA,ripF,massK,level:L};
+  return {px,pv,hy,aa,an,tw,size,height,hue,turn,name,tint,twist,ripA,ripF,massK,level:L};
 }
 function moonDef(i,m){ /* moon m of room i — re-dreamed identically every visit */
   const s=100+m*13;
@@ -566,7 +600,9 @@ function rebuildChain(){
     dirOut
   };
   $('roomV').textContent=dCur.name;
-  $('roomI').textContent='#'+CI+' · '+(dCur.shape===3?'STAR-'+dCur.starN:SHAPENAMES[dCur.shape]);
+  $('roomI').textContent='#'+CI+' · '+shapeName(dCur)
+    +' · p'+dCur.px.toFixed(1)+'/'+dCur.pv.toFixed(1)
+    +(dCur.tw>0.01?' · ring '+dCur.tw.toFixed(2):'');
   $('massV').textContent=dCur.massK.toFixed(2)+' · '+(dCur.twist>=0?'+':'')+dCur.twist.toFixed(3);
   updateLevelHud();
 }
@@ -609,70 +645,28 @@ function retreat(){                    /* stepped back — re-dream the past */
 }
 
 /* ---------------- JS twins of the SDFs (collision + transitions) ---------- */
-function sdBoxJ(px,py,pz,bx,by,bz){
-  const qx=Math.abs(px)-bx,qy=Math.abs(py)-by,qz=Math.abs(pz)-bz;
-  return Math.hypot(Math.max(qx,0),Math.max(qy,0),Math.max(qz,0))
-        +Math.min(Math.max(qx,Math.max(qy,qz)),0);}
-function sdHexJ(px,py,pz,h1,h2){
-  const kx=-0.8660254,ky=0.5,kz=0.57735;
-  px=Math.abs(px);py=Math.abs(py);pz=Math.abs(pz);
-  const d0=Math.min(kx*px+ky*py,0)*2;
-  px-=d0*kx;py-=d0*ky;
-  const cl=Math.min(Math.max(px,-kz*h1),kz*h1);
-  const dx=Math.hypot(px-cl,py-h1)*Math.sign(py-h1);
-  const dy=pz-h2;
-  return Math.min(Math.max(dx,dy),0)+Math.hypot(Math.max(dx,0),Math.max(dy,0));}
-function sdStarNJ(px,py,r,n,m){
-  const an=Math.PI/n,en=Math.PI/m;
-  const ax=Math.cos(an),ay=Math.sin(an),ex=Math.cos(en),ey=Math.sin(en);
-  let bn=Math.atan2(px,py)%(2*an); if(bn<0)bn+=2*an; bn-=an;
-  const l=Math.hypot(px,py);
-  px=l*Math.cos(bn); py=l*Math.abs(Math.sin(bn));
-  px-=r*ax; py-=r*ay;
-  const cl=Math.min(Math.max(-(px*ex+py*ey),0),r*ay/ey);
-  px+=ex*cl; py+=ey*cl;
-  return Math.hypot(px,py)*Math.sign(px);}
-function opExtrJ(d2,z,h){const wy=Math.abs(z)-h;
-  return Math.min(Math.max(d2,wy),0)+Math.hypot(Math.max(d2,0),Math.max(wy,0));}
+/* corridor segment distance — the twin of GLSL sdSeg */
 function sdSegJ(px,py,pz,a,b){
   const bax=b[0]-a[0],bay=b[1]-a[1],baz=b[2]-a[2];
   const pax=px-a[0],pay=py-a[1],paz=pz-a[2];
   const h=Math.min(Math.max((pax*bax+pay*bay+paz*baz)/(bax*bax+bay*bay+baz*baz),0),1);
   return Math.hypot(pax-bax*h,pay-bay*h,paz-baz*h);}
-function sdSegOJ(px,py,pz,ax,ay,az,bx,by,bz){
-  const bax=bx-ax,bay=by-ay,baz=bz-az;
-  const pax=px-ax,pay=py-ay,paz=pz-az;
-  const h=Math.min(Math.max((pax*bax+pay*bay+paz*baz)/(bax*bax+bay*bay+baz*baz),0),1);
-  return Math.hypot(pax-bax*h,pay-bay*h,paz-baz*h);}
+/* the SAME kernel, mirrored exactly for collision and gate transitions */
 function shapeSDJ(x,y,z,d){
-  const s=d.size,h=d.height;
-  switch(d.shape){
-    case 0:return sdBoxJ(x,y,z,s,h,s);
-    case 1:return Math.hypot(x,y,z)-s;
-    case 2:return sdHexJ(x,z,y,s,h);
-    case 3:{const m=2.0+(d.starN-2.0)*0.45;
-            return opExtrJ(sdStarNJ(x,z,s*1.15,d.starN,m),y,h);}
-    case 4:return (Math.abs(x)+Math.abs(y)+Math.abs(z)-s*1.5)*0.57735;
-    case 5:return Math.max(Math.hypot(x,z)-s,Math.abs(y)-h);
-    case 6:{const cy=y-Math.min(Math.max(y,-h*0.55),h*0.55);
-            return Math.hypot(x,cy,z)-s*0.90;}
-    case 7:return Math.max(sdBoxJ(x,y,z,s*0.95,s*0.95,s*0.95),
-                          (Math.abs(x)+Math.abs(y)+Math.abs(z)-s*1.45)*0.57735);
-    case 8:return (Math.hypot(x,y*1.35,z)-s*1.08)*0.72;
-    case 9:return Math.min(sdBoxJ(x,y,z,s,h*0.55,s*0.38),
-                  Math.min(sdBoxJ(x,y,z,s*0.38,h*0.55,s),
-                           sdBoxJ(x,y,z,s*0.45,h,s*0.45)));
-    case 10:{const a=Math.atan2(z,x);
-             const rr=s*(0.88+0.11*Math.cos(a*d.starN*2.0));
-             return Math.max(Math.hypot(x,z)-rr,Math.abs(y)-h)*0.68;}
-    default:{const tor=Math.hypot(Math.hypot(x,z)-s*0.72,y)-s*0.40;
-             const hub=Math.hypot(x,y,z)-s*0.40;
-             let sp=Math.min(sdSegOJ(x,y,z,0,0,0,s*0.72,0,0),
-                             sdSegOJ(x,y,z,0,0,0,-s*0.72,0,0));
-             sp=Math.min(sp,Math.min(sdSegOJ(x,y,z,0,0,0,0,0,s*0.72),
-                                     sdSegOJ(x,y,z,0,0,0,0,0,-s*0.72)))-s*0.17;
-             return Math.min(tor,Math.min(hub,sp));}
+  const s=d.size;
+  const cx=Math.pow(Math.pow(Math.abs(x)+1e-5,d.px)+Math.pow(Math.abs(z)+1e-5,d.px),1/d.px);
+  const lp=Math.pow(Math.pow(cx,d.pv)+Math.pow(Math.abs(y/d.hy)+1e-5,d.pv),1/d.pv);
+  let sd=(lp-s)*Math.min(d.hy,1.0);
+  if(d.tw>0.001){
+    const dR=Math.hypot(Math.hypot(x,z)-s*0.72,y)-s*0.42;
+    sd=sd+(dR-sd)*d.tw;
   }
+  if(d.aa>0.001){
+    const rr=Math.hypot(x,z);
+    const w=Math.min(Math.max(rr/(0.35*s),0),1);
+    sd-=s*d.aa*w*Math.cos(d.an*Math.atan2(z,x+1e-6));
+  }
+  return sd/(1.0+d.aa*(d.an+1.0)*2.9);
 }
 function roomSDJ(px,py,pz,r){
   const d=R.def[r],c=R.pos[r];
@@ -697,7 +691,8 @@ let P={mGain:1.0,lensK:1.0},mode=0,idle=1;
 const wellsF=new Float32Array(MAXW*4), colsF=new Float32Array(MAXW*3),
       parF=new Float32Array(MAXW*4),
       roomPosF=new Float32Array(9), roomParF=new Float32Array(12),
-      roomModF=new Float32Array(12), roomTintF=new Float32Array(9);
+      roomModF=new Float32Array(12), roomShpF=new Float32Array(12),
+      roomTintF=new Float32Array(9);
 function moonCol(h){
   return[0.55+0.45*Math.cos(6.283*h),0.55+0.45*Math.cos(6.283*(h+0.33)),0.55+0.45*Math.cos(6.283*(h+0.66))];}
 let keyWell=-1, keyPos=null, keyR=0;
@@ -708,8 +703,9 @@ function packWorld(t){
   for(let r=0;r<3;r++){
     const d=R.def[r],c=R.pos[r];
     roomPosF[r*3]=c[0];roomPosF[r*3+1]=c[1];roomPosF[r*3+2]=c[2];
-    roomParF[r*4]=d.shape;roomParF[r*4+1]=d.size;roomParF[r*4+2]=d.height;roomParF[r*4+3]=d.starN;
+    roomParF[r*4]=d.size;roomParF[r*4+1]=d.px;roomParF[r*4+2]=d.pv;roomParF[r*4+3]=d.hy;
     roomModF[r*4]=d.twist;roomModF[r*4+1]=d.ripA;roomModF[r*4+2]=d.ripF;roomModF[r*4+3]=d.massK;
+    roomShpF[r*4]=d.aa;roomShpF[r*4+1]=d.an;roomShpF[r*4+2]=d.tw;roomShpF[r*4+3]=0;
     roomTintF[r*3]=d.tint[0];roomTintF[r*3+1]=d.tint[1];roomTintF[r*3+2]=d.tint[2];
     const A=d.size*0.62, Ay=d.height*0.55;
     for(let m=0;m<nM && w<MAXW;m++,w++){
@@ -727,7 +723,7 @@ function packWorld(t){
       wellsF[w*4+3]=size;
       const cc=isKey?[1.0,0.84,0.36]:moonCol(md.hue);
       colsF[w*3]=cc[0];colsF[w*3+1]=cc[1];colsF[w*3+2]=cc[2];
-      parF[w*4]=d.shape;parF[w*4+1]=md.ra*t+md.pa;parF[w*4+2]=md.rb*t+md.pb;parF[w*4+3]=d.starN;
+      parF[w*4]=md.ra*t+md.pa;parF[w*4+1]=md.rb*t+md.pb;parF[w*4+2]=r;parF[w*4+3]=0;
       if(isKey){keyWell=w;keyPos=[wellsF[w*4],wellsF[w*4+1],wellsF[w*4+2]];keyR=size;}
     }
   }
@@ -844,13 +840,14 @@ $('bLoad').onclick=()=>{
 
 /* ---------------- controls ---------------- */
 const MODES=[
-  {name:'Boundary', note:'the walls are your camera. the moons are optical crystals — the room bends and refocuses through every one of them.'},
+  {name:'Boundary', note:'the walls are your camera; the moons are curved mirrors that lens and reflect them — your face drags where a moon passes.'},
   {name:'Projection', note:'the moons carry your face; every wall is a mirror. the image emanates from the bulk — the holographic swap.'},
-  {name:'Cascade', note:'heavy glass: Fresnel rims wear your face, the ray refracts through and keeps going, tinted by each crystal it crosses.'},
+  {name:'Cascade', note:'every crystal wears your face and mirrors its neighbours — worlds inside worlds, moon to wall to moon, built entirely from you.'},
+  {name:'Glass', note:'heavy optics: the ray refracts through each crystal (Snell + Beer-Lambert) and keeps flying — the honest-physics exhibit.'},
 ];
 function setMode(mi){
   mode=mi;
-  ['m0','m1','m2'].forEach((id,i)=>$(id).classList.toggle('on',i===mi));
+  ['m0','m1','m2','m3'].forEach((id,i)=>$(id).classList.toggle('on',i===mi));
   $('modeV').textContent=MODES[mi].name;
   $('modeNote').textContent=MODES[mi].note;
 }
@@ -862,6 +859,7 @@ bind('v','v_l',v=>{if(audio)audio.volume=v;});
 $('m0').onclick=()=>setMode(0);
 $('m1').onclick=()=>setMode(1);
 $('m2').onclick=()=>setMode(2);
+$('m3').onclick=()=>setMode(3);
 $('bSrc').onclick=()=>{useCam=!useCam;setSrcLabel();};
 $('bSeed').onclick=()=>{ SEED=(Math.random()*4294967296)>>>0;
   LEVEL=1;maxReached=1;keyFound=false;CI=0;
@@ -929,9 +927,14 @@ function compileAndStart(){
     }
     gl.useProgram(prog);
     ['iRes','iTime','camP','camR','camU','camF','nWell','mode','keyWell','mGain','lensK','camTex',
-     'wells','wellCol','wellPar','roomPos','roomPar','roomMod','roomTintU','seal']
+     'marchN','glassN','escN',
+     'wells','wellCol','wellPar','roomPos','roomPar','roomMod','roomShp','roomTintU','seal']
      .forEach(k=>U[k]=gl.getUniformLocation(prog,k));
     gl.uniform1i(U.camTex,0);
+    /* loop bounds — same values as the old constants, now opaque to the compiler */
+    gl.uniform1i(U.marchN,180);
+    gl.uniform1i(U.glassN,26);
+    gl.uniform1i(U.escN,10);
     $('bootStat').textContent='ready — click to enter';
     requestAnimationFrame(loop);
   }
@@ -996,6 +999,7 @@ function loop(now){
   gl.uniform3fv(U.roomPos,roomPosF);
   gl.uniform4fv(U.roomPar,roomParF);
   gl.uniform4fv(U.roomMod,roomModF);
+  gl.uniform4fv(U.roomShp,roomShpF);
   gl.uniform3fv(U.roomTintU,roomTintF);
   gl.uniform4f(U.seal,sealV[0],sealV[1],sealV[2],sealV[3]);
   gl.drawArrays(gl.TRIANGLES,0,3);
