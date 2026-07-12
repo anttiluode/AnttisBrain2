@@ -2,6 +2,8 @@
 
 EDIT: Fable wrote paper about the maths: resolution_horizon.md
 
+Edit: Added version with compute recursion depth using z and x buttons. 
+
 You can play the game with soudntrack at huggingface: 
 
 https://huggingface.co/spaces/Aluode/AnttisBrain
